@@ -1,7 +1,7 @@
-use crate::output::{clear_line, Output};
+use crate::output::{self, Output};
 use crate::{Proto, HELLO, MIN_FRAME_SIZE};
 use eva_common::Error;
-use log::{error, info};
+use log::info;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::thread;
@@ -45,7 +45,7 @@ pub fn run_server(path: &str, timeout: Duration) -> Result<(), Box<dyn std::erro
         info!("{}: connected", addr);
         thread::spawn(move || {
             if let Err(e) = handle_server_stream(conn, addr, timeout) {
-                error!("{}: {}", addr, e);
+                log::error!("{}: {}", addr, e);
             } else {
                 info!("{}: disconnected", addr);
             }
@@ -57,12 +57,9 @@ pub fn run_server(path: &str, timeout: Duration) -> Result<(), Box<dyn std::erro
 pub fn run_client_session(
     addr: SocketAddr,
     timeout: Duration,
-    frame_size: usize,
-    interval: Duration,
-    warn: Option<f64>,
-    chart: bool,
+    req: &[u8],
+    output: &mut Output,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let req = crate::create_frame(frame_size);
     let mut conn = TcpStream::connect_timeout(&addr, timeout)?;
     conn.set_nodelay(true)?;
     conn.set_read_timeout(Some(timeout))?;
@@ -73,25 +70,18 @@ pub fn run_client_session(
         return Err(Error::invalid_data("invalid hello").into());
     }
     let mut buf = vec![HELLO];
-    buf.extend(u32::try_from(frame_size)?.to_le_bytes());
+    buf.extend(u32::try_from(req.len())?.to_le_bytes());
     conn.write_all(&buf)?;
     info!("connected");
-    let mut response_buf = vec![0_u8; frame_size];
-    let mut output = Output::new(
-        addr,
-        Proto::Tcp,
-        Some(frame_size),
-        interval,
-        warn.map(Duration::from_secs_f64),
-        chart,
-    );
+    let mut response_buf = vec![0_u8; req.len()];
+    output.reset();
     loop {
-        conn.write_all(&req)?;
+        conn.write_all(req)?;
         conn.read_exact(&mut response_buf)?;
         if req != response_buf {
             return Err(Error::invalid_data("invalid packet").into());
         }
-        output.finish_iteration()?;
+        output.log_iteration(None)?;
     }
 }
 
@@ -101,22 +91,29 @@ pub fn run_client(
     frame_size_bytes: u32,
     interval_sec: f64,
     warn: Option<f64>,
-    chart: bool,
+    output_kind: output::Kind,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let frame_size = usize::try_from(frame_size_bytes)?;
+    if frame_size < MIN_FRAME_SIZE {
+        return Err(Error::invalid_data(format!("invalid frame size: {}", frame_size)).into());
+    }
+    let req = crate::create_frame(frame_size);
     let addr: SocketAddr = path
         .to_socket_addrs()?
         .next()
         .ok_or_else(|| Error::invalid_params("invalid socket addr"))?;
     let interval = Duration::from_secs_f64(interval_sec);
-    let frame_size = usize::try_from(frame_size_bytes)?;
-    if frame_size < MIN_FRAME_SIZE {
-        return Err(Error::invalid_data(format!("invalid frame size: {}", frame_size)).into());
-    }
+    let mut output = Output::new(
+        output_kind,
+        addr,
+        Proto::Tcp,
+        Some(frame_size),
+        interval,
+        warn.map(Duration::from_secs_f64),
+    );
     loop {
-        if let Err(e) = run_client_session(addr, timeout, frame_size, interval, warn, chart) {
-            clear_line();
-            error!("{}", e);
+        if let Err(e) = run_client_session(addr, timeout, &req, &mut output) {
+            output.log_iteration(Some(e))?;
         }
-        thread::sleep(interval);
     }
 }

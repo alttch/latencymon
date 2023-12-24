@@ -2,7 +2,6 @@ use bmart_derive::EnumStr;
 use clap::{Parser, ValueEnum};
 use rand::{thread_rng, Rng};
 use std::time::Duration;
-use syslog::{BasicLogger, Facility, Formatter3164};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const REPOSITORY: &str = "https://github.com/alttch/latencymon";
@@ -29,7 +28,7 @@ enum Mode {
     Server,
 }
 
-#[derive(ValueEnum, PartialEq, Clone, EnumStr)]
+#[derive(ValueEnum, PartialEq, Copy, Clone, EnumStr)]
 #[clap(rename_all = "lowercase")]
 #[enumstr(rename_all = "UPPERCASE")]
 pub enum Proto {
@@ -60,32 +59,18 @@ struct Args {
     frame_size: u32,
     #[clap(short = 'W', long = "latency-warn")]
     warn: Option<f64>,
-    #[clap(long = "syslog", help = "log to syslog")]
-    syslog: bool,
-    #[clap(short = 'C', long = "chart", help = "output result as a live chart")]
-    chart: bool,
+    #[clap(
+        short = 'O',
+        long = "output",
+        help = "output kind",
+        default_value = "regular"
+    )]
+    output_kind: output::Kind,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    let level_filter = log::LevelFilter::Info;
-    if args.syslog {
-        let formatter = Formatter3164 {
-            facility: Facility::LOG_USER,
-            hostname: None,
-            process: "latencymon".into(),
-            pid: 0,
-        };
-
-        let logger = syslog::unix(formatter)?;
-        log::set_boxed_logger(Box::new(BasicLogger::new(logger)))
-            .map(|()| log::set_max_level(level_filter))?;
-    } else {
-        env_logger::Builder::new()
-            .target(env_logger::Target::Stdout)
-            .filter_level(level_filter)
-            .init();
-    }
+    output::init_logger(args.output_kind)?;
     let timeout = Duration::from_secs(args.timeout.into());
     match args.mode {
         Mode::Server => match args.proto {
@@ -100,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 args.frame_size,
                 args.interval,
                 args.warn,
-                args.chart,
+                args.output_kind,
             )?,
             Proto::Udp => udp::run_client(
                 &args.socket,
@@ -108,11 +93,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 args.frame_size,
                 args.interval,
                 args.warn,
-                args.chart,
+                args.output_kind,
             )?,
-            Proto::Icmp => {
-                icmp::run_client(&args.socket, timeout, args.interval, args.warn, args.chart)?
-            }
+            Proto::Icmp => icmp::run_client(
+                &args.socket,
+                timeout,
+                args.interval,
+                args.warn,
+                args.output_kind,
+            )?,
         },
     }
     Ok(())

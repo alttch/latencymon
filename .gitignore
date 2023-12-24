@@ -1,1 +1,4 @@
-/target
+target
+target-aarch64-musl
+target-x86_64-musl
+_build

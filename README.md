@@ -32,19 +32,27 @@ permissions are required for the client.
   -I, --interval <INTERVAL>      [default: 1.0]
   -S, --frame-size <FRAME_SIZE>  frame size (TCP/UDP) [default: 1500]
   -W, --latency-warn <WARN>
-      --syslog                   log to syslog
-  -C, --chart                    output result as a live chart
+  -O, --output <OUTPUT_KIND>     output kind [default: regular] [possible values: regular, syslog, chart, ndjson]
 ```
 
 * when *--latency-warn* option is specified (in seconds), logs only frames with
 latency equal or greater than the specified number
 
-* when *--syslog* option is specified, logs all messages to syslog. Useful to
+* when *--output syslog* option is specified, logs all messages to syslog. Useful to
 run the tool in the background or as a system service
 
-* when *--chart* option is specified, outputs the result as a live chart in the
+* when *--output chart* option is specified, outputs the result as a live chart in the
 console
 
 <img src="https://raw.githubusercontent.com/alttch/latencymon/master/chart.png"
 />
 
+* when *--output ndjson* option is specified, outputs the result as ndjson in
+the following line format:
+
+```json
+{"t":1703460047.4284112,"v":0.009972634}
+```
+
+where "t" field is the event timestamp and "v" is latency in seconds. In case
+of errors, "v" is set to -1.

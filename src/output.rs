@@ -1,14 +1,17 @@
 use crate::Proto;
+use clap::ValueEnum;
 use colored::Colorize;
-use log::{info, warn};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::collections::VecDeque;
+use std::fmt;
 use std::fmt::Write as _;
 use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::thread;
 use std::time::{Duration, Instant};
+use std::time::{SystemTime, UNIX_EPOCH};
+use syslog::{BasicLogger, Facility, Formatter3164};
 use textplots::{AxisBuilder, Chart, LabelBuilder, LabelFormat, LineStyle, Plot, Shape};
 
 const CAROUSEL_CHARS: &[char] = &['-', '\\', '|', '/'];
@@ -19,13 +22,55 @@ const MAX_POINTS: u16 = 1000;
 static DATA: Lazy<Mutex<VecDeque<f32>>> =
     Lazy::new(|| Mutex::new(vec![0.0; usize::from(MAX_POINTS)].into()));
 
-pub fn append(v: f32) {
+#[derive(ValueEnum, PartialEq, Copy, Clone, Default)]
+#[clap(rename_all = "lowercase")]
+pub enum Kind {
+    #[default]
+    Regular,
+    Syslog,
+    Chart,
+    Ndjson,
+}
+
+pub fn init_logger(kind: Kind) -> Result<(), Box<dyn std::error::Error>> {
+    match kind {
+        Kind::Regular | Kind::Chart => {
+            env_logger::Builder::new()
+                .target(env_logger::Target::Stdout)
+                .filter_level(log::LevelFilter::Info)
+                .init();
+        }
+        Kind::Syslog => {
+            let formatter = Formatter3164 {
+                facility: Facility::LOG_USER,
+                hostname: None,
+                process: "latencymon".into(),
+                pid: 0,
+            };
+
+            let logger = syslog::unix(formatter)?;
+            log::set_boxed_logger(Box::new(BasicLogger::new(logger)))
+                .map(|()| log::set_max_level(log::LevelFilter::Info))?;
+        }
+        Kind::Ndjson => {}
+    }
+    Ok(())
+}
+
+fn timestamp() -> f64 {
+    let now = SystemTime::now();
+    now.duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
+}
+
+pub fn append_data(v: f32) {
     let mut data = DATA.lock();
     data.push_back(v);
     data.pop_front();
 }
 
-pub fn redraw(title: &str, last: f32) {
+pub fn redraw_chart(title: &str, last: f32) {
     if let Ok((mut width, height)) = termion::terminal_size() {
         let _ = write!(
             io::stdout(),
@@ -71,7 +116,7 @@ pub struct Output {
     carousel_buf: [u8; 5],
     carousel_pos: usize,
     latency_warn: Option<Duration>,
-    draw_chart: bool,
+    kind: Kind,
     next: Instant,
     op: Instant,
     title: String,
@@ -79,12 +124,12 @@ pub struct Output {
 
 impl Output {
     pub fn new(
+        kind: Kind,
         addr: SocketAddr,
         proto: Proto,
         frame_size: Option<usize>,
         interval: Duration,
         latency_warn: Option<Duration>,
-        draw_chart: bool,
     ) -> Self {
         let now = Instant::now();
         let mut title = format!(
@@ -106,51 +151,55 @@ impl Output {
             carousel_enabled: atty::is(atty::Stream::Stdout),
             carousel_buf: [0x1b, b'[', b'D', 0x00, 0],
             carousel_pos: 0,
-            draw_chart,
+            kind,
             latency_warn,
             next: now + interval,
             op: now,
         }
     }
-    pub fn finish_iteration(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let elapsed = self.op.elapsed();
-        if self.draw_chart {
-            let val = elapsed.as_secs_f32() * 1000.0;
-            append(val);
-            redraw(&self.title, val);
+    pub fn reset(&mut self) {
+        let now = Instant::now();
+        self.op = now;
+        self.next = now + self.interval;
+    }
+    pub fn log_iteration(
+        &mut self,
+        err: Option<Box<dyn std::error::Error>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(e) = err {
+            self.print_error(e);
         } else {
-            if let Some(w) = self.latency_warn {
-                if elapsed >= w {
-                    if self.carousel_enabled {
-                        io::stdout().write_all(CLREOL)?;
-                    }
-                    warn!(
-                        "latency: {} sec ({} ms)",
-                        elapsed.as_secs_f64(),
-                        elapsed.as_millis()
-                    );
-                } else if self.carousel_enabled {
-                    self.carousel_buf[4] = CAROUSEL_CHARS[self.carousel_pos] as u8;
-                    let mut stdout = io::stdout();
-                    stdout.write_all(&self.carousel_buf)?;
-                    io::stdout().flush()?;
-                }
+            let elapsed = self.op.elapsed();
+            if self.kind == Kind::Chart {
+                let val = elapsed.as_secs_f32() * 1000.0;
+                append_data(val);
+                redraw_chart(&self.title, val);
             } else {
-                info!(
-                    "latency: {} sec ({} ms)",
-                    elapsed.as_secs_f64(),
-                    elapsed.as_millis()
-                );
-            }
-            self.carousel_pos += 1;
-            if self.carousel_pos >= CAROUSEL_CHARS.len() {
-                self.carousel_pos = 0;
+                if let Some(w) = self.latency_warn {
+                    if elapsed >= w {
+                        if self.carousel_enabled {
+                            io::stdout().write_all(CLREOL)?;
+                        }
+                        self.print_latency(elapsed.as_secs_f64(), log::Level::Warn);
+                    } else if self.carousel_enabled {
+                        self.carousel_buf[4] = CAROUSEL_CHARS[self.carousel_pos] as u8;
+                        let mut stdout = io::stdout();
+                        stdout.write_all(&self.carousel_buf)?;
+                        io::stdout().flush()?;
+                    }
+                } else {
+                    self.print_latency(elapsed.as_secs_f64(), log::Level::Info);
+                }
+                self.carousel_pos += 1;
+                if self.carousel_pos >= CAROUSEL_CHARS.len() {
+                    self.carousel_pos = 0;
+                }
             }
         }
         let now = Instant::now();
         if now > self.next {
-            if !self.draw_chart {
-                warn!("loop timeout");
+            if self.kind != Kind::Chart {
+                self.print_warning("loop timeout");
             }
             self.next = now + self.interval;
         } else {
@@ -159,5 +208,39 @@ impl Output {
         }
         self.op = Instant::now();
         Ok(())
+    }
+    fn print_warning(&self, msg: impl fmt::Display) {
+        match self.kind {
+            Kind::Regular | Kind::Syslog | Kind::Chart => {
+                clear_line();
+                log::warn!("{}", msg);
+            }
+            Kind::Ndjson => {}
+        }
+    }
+    fn print_error(&self, msg: impl fmt::Display) {
+        match self.kind {
+            Kind::Regular | Kind::Syslog | Kind::Chart => {
+                clear_line();
+                log::error!("{}", msg);
+            }
+            Kind::Ndjson => self.print_latency(-1.0, log::Level::Error),
+        }
+    }
+    fn print_latency(&self, latency: f64, level: log::Level) {
+        match self.kind {
+            Kind::Regular | Kind::Syslog => {
+                log::log!(
+                    level,
+                    "latency: {} sec ({:.0} ms)",
+                    latency,
+                    latency * 1000.0
+                );
+            }
+            Kind::Ndjson => {
+                println!(r#"{{"t":{},"v":{}}}"#, timestamp(), latency);
+            }
+            Kind::Chart => {}
+        }
     }
 }
