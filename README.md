@@ -37,7 +37,7 @@ permissions are required for the client.
 ```
 
 * when *--latency-warn* option is specified, logs only frames with latency
-greater than the specified number
+equal or greater than the specified number
 
 * when *--syslog* option is specified, logs all messages to syslog. Useful to
 run the tool in the background or as a system service
