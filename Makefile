@@ -10,8 +10,8 @@ release: tag pkg
 
 clean:
 	cargo clean
-	CARGO_TARGET_DIR=target-aarch64-musl cargo clean
-	CARGO_TARGET_DIR=target-aarch64-musl cargo clean
+	CARGO_TARGET_DIR=target-aarch64-musl ~/.cargo/bin/cargo clean
+	CARGO_TARGET_DIR=target-x86_64-musl ~/.cargo/bin/cargo clean
 
 pkg:
 	rm -rf _build
