@@ -40,7 +40,7 @@ root permissions are required for the client.
 greater than the specified number
 
 * when *--syslog* option is specified, logs all messages to syslog. Useful to
-run the tool in background or as a system service
+run the tool in the background or as a system service
 
 * when *--chart* option is specified, outputs the result as a live chart in the
 console
