@@ -22,8 +22,8 @@ latencymon server tcp 0.0.0.0:9999
 latencymon client icmp 10.90.1.7
 ```
 
-In ICMP mode the tool works as the regular ping program. No server is required,
-root permissions are required for the client.
+In ICMP mode the tool works as a regular ping. No server is required, root
+permissions are required for the client.
 
 ## Options
 
