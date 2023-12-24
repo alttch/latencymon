@@ -4,6 +4,9 @@ use rand::{thread_rng, Rng};
 use std::time::Duration;
 use syslog::{BasicLogger, Facility, Formatter3164};
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const REPOSITORY: &str = "https://github.com/alttch/latencymon";
+
 mod icmp;
 mod output;
 mod tcp;
@@ -36,6 +39,7 @@ pub enum Proto {
 }
 
 #[derive(Parser)]
+#[clap(version = VERSION, about = REPOSITORY)]
 struct Args {
     #[clap()]
     mode: Mode,
@@ -47,13 +51,18 @@ struct Args {
     timeout: u16,
     #[clap(short = 'I', long = "interval", default_value = "1.0")]
     interval: f64,
-    #[clap(short = 'S', long = "frame-size", default_value = "1500")]
+    #[clap(
+        short = 'S',
+        long = "frame-size",
+        default_value = "1500",
+        help = "frame size (TCP/UDP)"
+    )]
     frame_size: u32,
     #[clap(short = 'W', long = "latency-warn")]
     warn: Option<f64>,
-    #[clap(long = "syslog")]
+    #[clap(long = "syslog", help = "log to syslog")]
     syslog: bool,
-    #[clap(short = 'C', long = "chart")]
+    #[clap(short = 'C', long = "chart", help = "output result as a live chart")]
     chart: bool,
 }
 
