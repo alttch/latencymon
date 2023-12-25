@@ -1,8 +1,8 @@
-use crate::output::{self, Output};
-use crate::{Proto, MAX_UDP_FRAME_SIZE, MIN_FRAME_SIZE};
+use crate::output::Output;
+use crate::{ClientOptions, MAX_UDP_FRAME_SIZE};
 use eva_common::Error;
 use log::info;
-use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::{SocketAddr, UdpSocket};
 use std::time::Duration;
 
 pub fn run_server(path: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -37,35 +37,13 @@ fn run_client_session(
 }
 
 pub fn run_client(
-    path: &str,
+    opts: &ClientOptions,
     timeout: Duration,
-    frame_size_bytes: u32,
-    interval_sec: f64,
-    warn: Option<f64>,
-    output_kind: output::Kind,
-    output_options: Option<&str>,
+    output: &mut Output,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let frame_size = usize::try_from(frame_size_bytes)?;
-    if frame_size < MIN_FRAME_SIZE {
-        return Err(Error::invalid_data(format!("invalid frame size: {}", frame_size)).into());
-    }
-    let req = crate::create_frame(frame_size);
-    let addr: SocketAddr = path
-        .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| Error::invalid_params("invalid socket addr"))?;
-    let interval = Duration::from_secs_f64(interval_sec);
-    let mut output = Output::create(
-        output_kind,
-        output_options,
-        addr,
-        Proto::Udp,
-        Some(frame_size),
-        interval,
-        warn.map(Duration::from_secs_f64),
-    )?;
+    let req = opts.req.as_ref().unwrap();
     loop {
-        if let Err(e) = run_client_session(addr, timeout, &req, &mut output) {
+        if let Err(e) = run_client_session(opts.addr, timeout, req, output) {
             output.log_iteration(Some(e))?;
         }
     }

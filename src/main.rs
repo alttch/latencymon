@@ -1,6 +1,8 @@
 use bmart_derive::EnumStr;
 use clap::{Parser, ValueEnum};
+use eva_common::Error;
 use rand::{thread_rng, Rng};
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::time::Duration;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -44,8 +46,8 @@ struct Args {
     mode: Mode,
     #[clap()]
     proto: Proto,
-    #[clap()]
-    socket: String,
+    #[clap(help = "IP(ICMP)/IP:PORT")]
+    path: String,
     #[clap(short = 'T', long = "timeout", default_value = "30")]
     timeout: u16,
     #[clap(short = 'I', long = "interval", default_value = "1.0")]
@@ -70,44 +72,69 @@ struct Args {
     output_options: Option<String>,
 }
 
+impl Args {
+    fn to_client_options(&self) -> Result<ClientOptions, Box<dyn std::error::Error>> {
+        let opts = if self.proto == Proto::Icmp {
+            ClientOptions {
+                addr: (self.path.as_str(), 0)
+                    .to_socket_addrs()?
+                    .next()
+                    .ok_or_else(|| Error::invalid_params("invalid ip/host"))?,
+                req: None,
+            }
+        } else {
+            let frame_size = usize::try_from(self.frame_size)?;
+            if frame_size < MIN_FRAME_SIZE {
+                return Err(
+                    Error::invalid_data(format!("invalid frame size: {}", frame_size)).into(),
+                );
+            }
+            ClientOptions {
+                addr: self
+                    .path
+                    .to_socket_addrs()?
+                    .next()
+                    .ok_or_else(|| Error::invalid_params("invalid socket addr"))?,
+                req: Some(create_frame(frame_size)),
+            }
+        };
+        Ok(opts)
+    }
+}
+
+pub struct ClientOptions {
+    addr: SocketAddr,
+    req: Option<Vec<u8>>,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     output::init_logger(args.output_kind)?;
     let timeout = Duration::from_secs(args.timeout.into());
     match args.mode {
         Mode::Server => match args.proto {
-            Proto::Tcp => tcp::run_server(&args.socket, timeout)?,
-            Proto::Udp => udp::run_server(&args.socket)?,
+            Proto::Tcp => tcp::run_server(&args.path, timeout)?,
+            Proto::Udp => udp::run_server(&args.path)?,
             Proto::Icmp => unimplemented!(),
         },
-        Mode::Client => match args.proto {
-            Proto::Tcp => tcp::run_client(
-                &args.socket,
-                timeout,
-                args.frame_size,
-                args.interval,
-                args.warn,
+        Mode::Client => {
+            let interval = Duration::from_secs_f64(args.interval);
+            let client_options = args.to_client_options()?;
+            let mut output = output::Output::create(
                 args.output_kind,
                 args.output_options.as_deref(),
-            )?,
-            Proto::Udp => udp::run_client(
-                &args.socket,
-                timeout,
-                args.frame_size,
-                args.interval,
-                args.warn,
-                args.output_kind,
-                args.output_options.as_deref(),
-            )?,
-            Proto::Icmp => icmp::run_client(
-                &args.socket,
-                timeout,
-                args.interval,
-                args.warn,
-                args.output_kind,
-                args.output_options.as_deref(),
-            )?,
-        },
+                client_options.addr,
+                args.proto,
+                client_options.req.as_ref().map(Vec::len),
+                interval,
+                args.warn.map(Duration::from_secs_f64),
+            )?;
+            match args.proto {
+                Proto::Tcp => tcp::run_client(&client_options, timeout, &mut output)?,
+                Proto::Udp => udp::run_client(&client_options, timeout, &mut output)?,
+                Proto::Icmp => icmp::run_client(&client_options, timeout, &mut output)?,
+            }
+        }
     }
     Ok(())
 }
