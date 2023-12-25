@@ -10,6 +10,7 @@ atty = "0.2.14"
 bmart-derive = "0.1.3"
 clap = { version = "4.4.11", features = ["derive"] }
 colored = "2.1.0"
+crossterm = "0.27.0"
 env_logger = "0.10.1"
 eva-common = { version = "0.3.20", features = ["serde-keyvalue"] }
 log = "0.4.20"
@@ -20,7 +21,6 @@ rand = "0.8.5"
 rgb = "0.8.37"
 serde = { version = "1.0.193", features = ["derive"] }
 syslog = "6.1.0"
-termion = "2.0.3"
 textplots = "0.8.4"
 
 [profile.release]

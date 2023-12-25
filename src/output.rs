@@ -1,6 +1,7 @@
 use crate::Proto;
 use clap::ValueEnum;
 use colored::Colorize;
+use crossterm::{cursor, terminal, ExecutableCommand};
 use eva_common::{err_logger, value::Value, EResult, Error, OID};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -100,42 +101,46 @@ pub fn append_data(v: f32) {
 }
 
 pub fn redraw_chart(title: &str, last: f32) {
-    if let Ok((mut width, height)) = termion::terminal_size() {
-        let _ = write!(
-            io::stdout(),
-            "{}{}",
-            termion::clear::All,
-            termion::cursor::Goto(1, 1)
-        );
-        width = width * 2 - 18;
-        if width > MAX_POINTS {
-            width = MAX_POINTS;
-        }
-        #[allow(clippy::cast_precision_loss)]
-        let points = {
-            let data = DATA.lock();
-            let points = data
-                .iter()
-                .skip(data.len() - usize::from(width))
-                .enumerate()
-                .map(|(i, v)| (i as f32, *v))
-                .collect::<Vec<(f32, f32)>>();
-            points
-        };
-        println!("{}: {} ms", title, format!("{:.0}", last).white().bold());
-        Chart::new(width.into(), height.into(), 0.0, f32::from(width))
-            .x_axis_style(LineStyle::None)
-            .y_axis_style(LineStyle::None)
-            .x_label_format(LabelFormat::None)
-            .y_label_format(LabelFormat::Custom(Box::new(|v| format!("{:.0}", v))))
-            .lineplot(&Shape::Lines(&points))
-            .display();
+    let (mut width, height) = crossterm::terminal::size().unwrap_or((80, 25));
+    clear_screen();
+    width = width * 2 - 18;
+    if width > MAX_POINTS {
+        width = MAX_POINTS;
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let points = {
+        let data = DATA.lock();
+        let points = data
+            .iter()
+            .skip(data.len() - usize::from(width))
+            .enumerate()
+            .map(|(i, v)| (i as f32, *v))
+            .collect::<Vec<(f32, f32)>>();
+        points
+    };
+    println!("{}: {} ms", title, format!("{:.0}", last).white().bold());
+    Chart::new(width.into(), height.into(), 0.0, f32::from(width))
+        .x_axis_style(LineStyle::None)
+        .y_axis_style(LineStyle::None)
+        .x_label_format(LabelFormat::None)
+        .y_label_format(LabelFormat::Custom(Box::new(|v| format!("{:.0}", v))))
+        .lineplot(&Shape::Lines(&points))
+        .display();
+}
+
+pub fn clear_screen() {
+    if atty::is(atty::Stream::Stdout) {
+        let mut stdout = io::stdout();
+        let _ = stdout.execute(terminal::Clear(terminal::ClearType::All));
+        let _ = stdout.execute(cursor::MoveTo(0, 0));
     }
 }
 
 pub fn clear_line() {
     if atty::is(atty::Stream::Stdout) {
-        let _ = io::stdout().write(CLREOL);
+        let mut stdout = io::stdout();
+        let _ = stdout.execute(terminal::Clear(terminal::ClearType::CurrentLine));
+        let _ = stdout.execute(cursor::MoveToColumn(0));
     }
 }
 
