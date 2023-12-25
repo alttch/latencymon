@@ -92,6 +92,7 @@ pub fn run_client(
     interval_sec: f64,
     warn: Option<f64>,
     output_kind: output::Kind,
+    output_options: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame_size = usize::try_from(frame_size_bytes)?;
     if frame_size < MIN_FRAME_SIZE {
@@ -103,14 +104,15 @@ pub fn run_client(
         .next()
         .ok_or_else(|| Error::invalid_params("invalid socket addr"))?;
     let interval = Duration::from_secs_f64(interval_sec);
-    let mut output = Output::new(
+    let mut output = Output::create(
         output_kind,
+        output_options,
         addr,
         Proto::Tcp,
         Some(frame_size),
         interval,
         warn.map(Duration::from_secs_f64),
-    );
+    )?;
     loop {
         if let Err(e) = run_client_session(addr, timeout, &req, &mut output) {
             output.log_iteration(Some(e))?;

@@ -1,18 +1,23 @@
 use crate::Proto;
 use clap::ValueEnum;
 use colored::Colorize;
+use eva_common::{err_logger, value::Value, EResult, Error, OID};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
+use serde::Deserialize;
 use std::collections::VecDeque;
 use std::fmt;
 use std::fmt::Write as _;
 use std::io::{self, Write};
 use std::net::SocketAddr;
+use std::net::UdpSocket;
 use std::thread;
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 use syslog::{BasicLogger, Facility, Formatter3164};
 use textplots::{AxisBuilder, Chart, LabelBuilder, LabelFormat, LineStyle, Plot, Shape};
+
+err_logger!();
 
 const CAROUSEL_CHARS: &[char] = &['-', '\\', '|', '/'];
 const CLREOL: &[u8] = &[0x1b, b'[', b'0', b'G', 0x1b, b'[', b'0', b'K'];
@@ -22,14 +27,38 @@ const MAX_POINTS: u16 = 1000;
 static DATA: Lazy<Mutex<VecDeque<f32>>> =
     Lazy::new(|| Mutex::new(vec![0.0; usize::from(MAX_POINTS)].into()));
 
+#[derive(Deserialize, Default, Copy, Clone, Debug)]
+#[serde(rename_all = "lowercase")]
+enum Units {
+    #[default]
+    S,
+    Ms,
+    Us,
+    Ns,
+}
+
+impl Units {
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_sign_loss)]
+    fn latency_to_value(self, latency: f64) -> Value {
+        match self {
+            Units::S => Value::F64(latency),
+            Units::Ms => Value::U64((latency * 1_000.0).round() as u64),
+            Units::Us => Value::U64((latency * 1_000_000.0).round() as u64),
+            Units::Ns => Value::U64((latency * 1_000_000_000.0).round() as u64),
+        }
+    }
+}
+
 #[derive(ValueEnum, PartialEq, Copy, Clone, Default)]
-#[clap(rename_all = "lowercase")]
+#[clap(rename_all = "snake_case")]
 pub enum Kind {
     #[default]
     Regular,
     Syslog,
     Chart,
     Ndjson,
+    Eva4Trap,
 }
 
 pub fn init_logger(kind: Kind) -> Result<(), Box<dyn std::error::Error>> {
@@ -40,7 +69,7 @@ pub fn init_logger(kind: Kind) -> Result<(), Box<dyn std::error::Error>> {
                 .filter_level(log::LevelFilter::Info)
                 .init();
         }
-        Kind::Syslog => {
+        Kind::Syslog | Kind::Eva4Trap => {
             let formatter = Formatter3164 {
                 facility: Facility::LOG_USER,
                 hostname: None,
@@ -110,6 +139,53 @@ pub fn clear_line() {
     }
 }
 
+struct EvaNotifier {
+    config: EvaConfig,
+    socket: UdpSocket,
+}
+
+impl EvaNotifier {
+    fn create(options: Option<&str>) -> EResult<Self> {
+        if let Some(o) = options {
+            let config: EvaConfig = eva_common::serde_keyvalue::from_key_values(o)?;
+            let socket = UdpSocket::bind("0.0.0.0:0")?;
+            Ok(Self { config, socket })
+        } else {
+            Err(Error::invalid_params("output options not specified"))
+        }
+    }
+}
+
+impl Notifier for EvaNotifier {
+    fn notify_latency(&self, latency: f64) -> Result<(), Box<dyn std::error::Error>> {
+        let message = format!(
+            "u {} 1 {}",
+            self.config.oid,
+            self.config.units.latency_to_value(latency)
+        );
+        self.socket.send_to(message.as_bytes(), self.config.path)?;
+        Ok(())
+    }
+    fn notify_error(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let message = format!("u {} -1", self.config.oid,);
+        self.socket.send_to(message.as_bytes(), self.config.path)?;
+        Ok(())
+    }
+}
+
+#[derive(Deserialize, Debug)]
+struct EvaConfig {
+    path: SocketAddr,
+    oid: OID,
+    #[serde(default)]
+    units: Units,
+}
+
+trait Notifier {
+    fn notify_latency(&self, latency: f64) -> Result<(), Box<dyn std::error::Error>>;
+    fn notify_error(&self) -> Result<(), Box<dyn std::error::Error>>;
+}
+
 pub struct Output {
     interval: Duration,
     carousel_enabled: bool,
@@ -120,17 +196,23 @@ pub struct Output {
     next: Instant,
     op: Instant,
     title: String,
+    notifier: Option<Box<dyn Notifier>>,
 }
 
 impl Output {
-    pub fn new(
+    pub fn create(
         kind: Kind,
+        options: Option<&str>,
         addr: SocketAddr,
         proto: Proto,
         frame_size: Option<usize>,
         interval: Duration,
         latency_warn: Option<Duration>,
-    ) -> Self {
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let notifier: Option<Box<dyn Notifier>> = match kind {
+            Kind::Eva4Trap => Some(Box::new(EvaNotifier::create(options)?)),
+            _ => None,
+        };
         let now = Instant::now();
         let mut title = format!(
             "{} ({})",
@@ -145,7 +227,7 @@ impl Output {
         if let Some(f) = frame_size {
             let _ = write!(title, " {} bytes", f.to_string().cyan());
         }
-        Self {
+        Ok(Self {
             title,
             interval,
             carousel_enabled: atty::is(atty::Stream::Stdout),
@@ -155,7 +237,8 @@ impl Output {
             latency_warn,
             next: now + interval,
             op: now,
-        }
+            notifier,
+        })
     }
     pub fn reset(&mut self) {
         let now = Instant::now();
@@ -210,21 +293,20 @@ impl Output {
         Ok(())
     }
     fn print_warning(&self, msg: impl fmt::Display) {
-        match self.kind {
-            Kind::Regular | Kind::Syslog | Kind::Chart => {
-                clear_line();
-                log::warn!("{}", msg);
-            }
-            Kind::Ndjson => {}
+        if self.kind != Kind::Ndjson {
+            clear_line();
+            log::warn!("{}", msg);
         }
     }
     fn print_error(&self, msg: impl fmt::Display) {
-        match self.kind {
-            Kind::Regular | Kind::Syslog | Kind::Chart => {
-                clear_line();
-                log::error!("{}", msg);
+        if self.kind == Kind::Ndjson {
+            self.print_latency(-1.0, log::Level::Error);
+        } else {
+            clear_line();
+            log::error!("{}", msg);
+            if let Some(ref n) = self.notifier {
+                n.notify_error().log_ef();
             }
-            Kind::Ndjson => self.print_latency(-1.0, log::Level::Error),
         }
     }
     fn print_latency(&self, latency: f64, level: log::Level) {
@@ -240,7 +322,11 @@ impl Output {
             Kind::Ndjson => {
                 println!(r#"{{"t":{},"v":{}}}"#, timestamp(), latency);
             }
-            Kind::Chart => {}
+            _ => {
+                if let Some(ref n) = self.notifier {
+                    n.notify_latency(latency).log_ef();
+                }
+            }
         }
     }
 }

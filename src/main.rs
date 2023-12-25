@@ -66,6 +66,8 @@ struct Args {
         default_value = "regular"
     )]
     output_kind: output::Kind,
+    #[clap(long = "output-options", help = "output options")]
+    output_options: Option<String>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -86,6 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 args.interval,
                 args.warn,
                 args.output_kind,
+                args.output_options.as_deref(),
             )?,
             Proto::Udp => udp::run_client(
                 &args.socket,
@@ -94,6 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 args.interval,
                 args.warn,
                 args.output_kind,
+                args.output_options.as_deref(),
             )?,
             Proto::Icmp => icmp::run_client(
                 &args.socket,
@@ -101,6 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 args.interval,
                 args.warn,
                 args.output_kind,
+                args.output_options.as_deref(),
             )?,
         },
     }

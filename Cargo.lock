@@ -312,17 +312,21 @@ dependencies = [
 
 [[package]]
 name = "eva-common"
-version = "0.3.19"
+version = "0.3.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb0df61ea351b8f589f38141dce786ece8cda2a1d9ae95a1f6c8ed48fe90c4d6"
+checksum = "0fd19e1ee32cf7f6ce4e513c5e5fcef41cf80fcd13f4c7c49393cdc239b50499"
 dependencies = [
  "ipnetwork",
  "log",
+ "nom",
+ "num-traits",
  "ordered-float",
+ "remain",
  "rust_decimal",
  "serde",
  "serde_json",
  "serde_repr",
+ "thiserror",
 ]
 
 [[package]]
@@ -453,6 +457,7 @@ dependencies = [
  "ping",
  "rand",
  "rgb",
+ "serde",
  "syslog",
  "termion",
  "textplots",
@@ -514,6 +519,22 @@ name = "memchr"
 version = "2.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f665ee40bc4a3c5590afb1e9677db74a508659dfd71e126420da8274909a0167"
+
+[[package]]
+name = "minimal-lexical"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
+
+[[package]]
+name = "nom"
+version = "7.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
+dependencies = [
+ "memchr",
+ "minimal-lexical",
+]
 
 [[package]]
 name = "num-traits"
@@ -750,6 +771,17 @@ name = "regex-syntax"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08c74e62047bb2de4ff487b251e4a92e24f48745648451635cec7d591162d9f"
+
+[[package]]
+name = "remain"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bce3a7139d2ee67d07538ee5dba997364fbc243e7e7143e96eb830c74bfaa082"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.41",
+]
 
 [[package]]
 name = "rend"

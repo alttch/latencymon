@@ -11,13 +11,14 @@ bmart-derive = "0.1.3"
 clap = { version = "4.4.11", features = ["derive"] }
 colored = "2.1.0"
 env_logger = "0.10.1"
-eva-common = "0.3.19"
+eva-common = { version = "0.3.20", features = ["serde-keyvalue"] }
 log = "0.4.20"
 once_cell = "1.19.0"
 parking_lot = "0.12.1"
 ping = "0.5.1"
 rand = "0.8.5"
 rgb = "0.8.37"
+serde = { version = "1.0.193", features = ["derive"] }
 syslog = "6.1.0"
 termion = "2.0.3"
 textplots = "0.8.4"
