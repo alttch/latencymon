@@ -21,8 +21,6 @@ use textplots::{AxisBuilder, Chart, LabelBuilder, LabelFormat, LineStyle, Plot, 
 err_logger!();
 
 const CAROUSEL_CHARS: &[char] = &['-', '\\', '|', '/'];
-const CLREOL: &[u8] = &[0x1b, b'[', b'0', b'G', 0x1b, b'[', b'0', b'K'];
-
 const MAX_POINTS: u16 = 1000;
 
 static DATA: Lazy<Mutex<VecDeque<f32>>> =
@@ -266,7 +264,7 @@ impl Output {
                 if let Some(w) = self.latency_warn {
                     if elapsed >= w {
                         if self.carousel_enabled {
-                            io::stdout().write_all(CLREOL)?;
+                            clear_line();
                         }
                         self.print_latency(elapsed.as_secs_f64(), log::Level::Warn);
                     } else if self.carousel_enabled {
